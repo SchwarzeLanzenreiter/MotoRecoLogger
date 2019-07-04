@@ -54,7 +54,7 @@ struct CANData {
 int g_sock;
 int g_running;
 char g_log_str[256];
-struct timeval g_start_timestamp = { 0, 0 };
+struct timespec g_start_timestamp = { 0, 0 };
 struct CANData g_candata;
 FILE *g_logfile = NULL;
 int g_flg_key_on[3];
@@ -150,11 +150,11 @@ int initialize(const char *sock)
 }
 
 // calc diff time from program start
-struct timeval elapsed_time(){
-	struct timeval timestamp;
-	struct timeval elapsed_timestamp;
-	
-	gettimeofday(&timestamp, NULL);
+struct timespec elapsed_time(){
+	struct timespec timestamp;
+	struct timespec elapsed_timestamp;
+
+	clock_gettime(CLOCK_MONOTONIC_RAW,&timestamp);
 				
 	// calc timestamp
 	if (g_start_timestamp.tv_sec == 0) // first init
@@ -163,14 +163,14 @@ struct timeval elapsed_time(){
 	}
 	
 	elapsed_timestamp.tv_sec  = timestamp.tv_sec  - g_start_timestamp.tv_sec;
-	elapsed_timestamp.tv_usec = timestamp.tv_usec - g_start_timestamp.tv_usec;
+	elapsed_timestamp.tv_nsec = timestamp.tv_nsec - g_start_timestamp.tv_nsec;
 	
-	if (elapsed_timestamp.tv_usec < 0){
-		elapsed_timestamp.tv_sec--, elapsed_timestamp.tv_usec += 1000000;
+	if (elapsed_timestamp.tv_nsec < 0){
+		elapsed_timestamp.tv_sec--, elapsed_timestamp.tv_nsec += 1000000000;
 	}
 	
 	if (elapsed_timestamp.tv_sec < 0){
-		elapsed_timestamp.tv_sec = elapsed_timestamp.tv_usec = 0;
+		elapsed_timestamp.tv_sec = elapsed_timestamp.tv_nsec = 0;
 	}
 	
 	return elapsed_timestamp;
@@ -243,7 +243,7 @@ int is_keyon(){
 			
 			//reset previous timestamp when can log file created
 			g_start_timestamp.tv_sec  = 0;
-			g_start_timestamp.tv_usec = 0;
+			g_start_timestamp.tv_nsec = 0;
 		}
 	//if detect key on 3 times in a raw, bike is keyoff
 	} else if (!g_flg_key_on[0] && !g_flg_key_on[1] && !g_flg_key_on[2]){
@@ -294,7 +294,7 @@ void keep_reading()
     struct can_frame frame_data;
     int recv = 0;
 	struct timeval tv = {1, 0};
-	struct timeval elapsed_timestamp;
+	struct timespec elapsed_timestamp;
 	fd_set readfd;
 	char timestring[16];
 	int int_lon, int_lat;
@@ -332,7 +332,7 @@ void keep_reading()
 				elapsed_timestamp = elapsed_time();
 
 				g_candata.second = elapsed_timestamp.tv_sec;
-				g_candata.mirisecond = elapsed_timestamp.tv_usec/1000;                //convert u sec to m sec, u sec is too high resolution
+				g_candata.mirisecond = elapsed_timestamp.tv_nsec/1000000;             //convert n sec to m sec, n sec is too high resolution
 				g_candata.id = frame_data.can_id;
 				memcpy(g_candata.data, frame_data.data, 8);
 			}
@@ -356,7 +356,7 @@ void keep_reading()
 						elapsed_timestamp = elapsed_time();
 
 						g_candata.second = elapsed_timestamp.tv_sec;	
-						g_candata.mirisecond = elapsed_timestamp.tv_usec/1000;                //convert u sec to m sec, u sec is too high resolution
+						g_candata.mirisecond = elapsed_timestamp.tv_nsec/1000000;             //convert n sec to m sec, n sec is too high resolution
 						
 						// longitude factor 1000000 offset 180
 						// latitude factor 1000000 offset 90
