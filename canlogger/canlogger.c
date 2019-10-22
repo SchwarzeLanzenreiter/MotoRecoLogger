@@ -41,7 +41,8 @@
 #define LOG_FILE "/home/pi/canlogger/canlogger.log"  		// debug log location
 #define CAN_DIR "/home/pi/canlogger/"  						// can log location
 #define SUP_BIKE 27									 		// SUP_BIKE is used to check whether motorcycle is awake
-#define GPS_CAN_ID_NUM 2031                    				// virtual CAN id for GPS data. 2031 = "7EF"
+#define GPS_CAN_ID_NUM1 2047                    			// virtual CAN id for longitude and latitude of GPS data. 2047 = "7FF"
+#define GPS_CAN_ID_NUM2 2046                    			// virtual CAN id for altitude and speed of GPS data. 2046 = "7FE"
 #define CAN_FILE_NAME_LENGTH 19
 
 struct CANData {
@@ -279,6 +280,11 @@ int is_keyon(){
 
 			rename(g_fname,latest_fname);
 			
+#ifdef DEBUG
+			sprintf(g_log_str, "renaming g_logfile '%s'\n", latest_fname);
+			debug_log(g_log_str);
+#endif			
+			
 			//disconnect gpsd 
 			gps_stream(&g_gps_data, WATCH_DISABLE, NULL);
 			gps_close (&g_gps_data);
@@ -297,7 +303,7 @@ void keep_reading()
 	struct timespec elapsed_timestamp;
 	fd_set readfd;
 	char timestring[16];
-	int int_lon, int_lat;
+	int int_lon, int_lat,int_alt,int_spd;
 	char buf[64];
 		
     while(g_running)
@@ -307,7 +313,7 @@ void keep_reading()
 			g_running = 0;
 			break;
 		}
-		
+
         FD_ZERO(&readfd);
         FD_SET(g_sock, &readfd);
 
@@ -335,8 +341,7 @@ void keep_reading()
 				g_candata.mirisecond = elapsed_timestamp.tv_nsec/1000000;             //convert n sec to m sec, n sec is too high resolution
 				g_candata.id = frame_data.can_id;
 				memcpy(g_candata.data, frame_data.data, 8);
-			}
-			
+			}			
 			// write to log file
 			if (g_logfile){
 				fwrite(&g_candata, sizeof(g_candata), 1, g_logfile);
@@ -347,25 +352,37 @@ void keep_reading()
 		if (g_rc != -1) {
 			if (gps_waiting (&g_gps_data, 0)) {
 				if ((g_rc = gps_read(&g_gps_data)) != -1) {
-				// only continue if longitude and latitude are fixed
-					if ((g_gps_data.status == STATUS_FIX) &&
+					// only continue if longitude and latitude are fixed
+					if (
+						(g_gps_data.status == STATUS_FIX || g_gps_data.status == STATUS_DGPS_FIX ) &&  //from raspbian buster, need to add STATUS_DGPS_FIX, or never log GPS data. 
 						(g_gps_data.fix.mode == MODE_2D || g_gps_data.fix.mode == MODE_3D) &&
 						!isnan(g_gps_data.fix.latitude) &&
 						!isnan(g_gps_data.fix.longitude)) {
-						
+			
 						elapsed_timestamp = elapsed_time();
+						
+#ifdef DEBUG
+//						printf("%f\n",g_gps_data.fix.longitude);
+//						printf("%f\n",g_gps_data.fix.latitude);
+//						printf("%f\n",g_gps_data.fix.altitude);
+//						printf("%f\n",g_gps_data.fix.speed);
+#endif
 
 						g_candata.second = elapsed_timestamp.tv_sec;	
 						g_candata.mirisecond = elapsed_timestamp.tv_nsec/1000000;             //convert n sec to m sec, n sec is too high resolution
 						
-						// longitude factor 1000000 offset 180
-						// latitude factor 1000000 offset 90
-						// record longitude and latitude as integer
+						//longitude	factor 1000000 offset 180
+						//latitude	factor 1000000 offset 90
+						//altitude	factor 1000000 offset 1000  // world lowest place is Dead Sea , -430m. 
+						//speed		factor 1000000 offset 0 (speed should be bigger than zero)
+
 						int_lon = g_gps_data.fix.longitude*1000000+180000000;
 						int_lat = g_gps_data.fix.latitude*1000000+90000000;
+						int_alt = g_gps_data.fix.altitude*1000000+1000000000;
+						int_spd = g_gps_data.fix.speed*1000000;
 						
-						// create can format data
-						g_candata.id = GPS_CAN_ID_NUM;
+						// create can format data1(include longitude and latitude)
+						g_candata.id = GPS_CAN_ID_NUM1;
 						memset(g_candata.data,0,sizeof(g_candata.data));
 						memcpy(g_candata.data, &int_lon, sizeof(int));
 						memcpy(&g_candata.data[4], &int_lat, sizeof(int));
@@ -374,9 +391,20 @@ void keep_reading()
 						if (g_logfile){
 							fwrite(&g_candata, sizeof(g_candata), 1, g_logfile);
 						}
+						
+						// create can format data2(altitude and speed)
+						g_candata.id = GPS_CAN_ID_NUM2;
+						memset(g_candata.data,0,sizeof(g_candata.data));
+						memcpy(g_candata.data, &int_alt, sizeof(int));
+						memcpy(&g_candata.data[4], &int_spd, sizeof(int));
+						
+						// record GPS data as CAN packet
+						if (g_logfile){
+							fwrite(&g_candata, sizeof(g_candata), 1, g_logfile);
+						}
 					} else {
 #ifdef DEBUG
-						sprintf(g_log_str,"gps not fixed\n");
+						sprintf(g_log_str,"gps not fixed gps_status:%d fix:%d\n",g_gps_data.status,g_gps_data.fix.mode);
 						debug_log(g_log_str);
 #endif
 					}
@@ -415,6 +443,10 @@ int finalize()
 	if (g_logfile != NULL){
 		fclose(g_logfile);
 		g_logfile = NULL;
+#ifdef DEBUG
+		sprintf(g_log_str,"close g_logfile in finalize function\n");
+		debug_log(g_log_str);
+#endif
 	}
 	
 	//disconnect gpsd 
