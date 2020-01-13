@@ -304,6 +304,8 @@ void keep_reading()
 	fd_set readfd;
 	char timestring[16];
 	int int_lon, int_lat,int_alt,int_spd;
+	int int_lon_prev = 0;
+	int int_lat_prev = 0;
 	char buf[64];
 		
     while(g_running)
@@ -380,6 +382,14 @@ void keep_reading()
 						int_lat = g_gps_data.fix.latitude*1000000+90000000;
 						int_alt = g_gps_data.fix.altitude*1000000+1000000000;
 						int_spd = g_gps_data.fix.speed*1000000;
+
+						// avoid logging multiple GPS info
+						if ((int_lon == int_lon_prev) && (int_lat == int_lat_prev)){
+							continue;
+						}
+
+						int_lon_prev = int_lon;
+						int_lat_prev = int_lat;
 						
 						// create can format data1(include longitude and latitude)
 						g_candata.id = GPS_CAN_ID_NUM1;
