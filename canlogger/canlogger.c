@@ -41,8 +41,8 @@
 
 #define DEBUG
 #define CAN_IF "can0"
-#define LOG_FILE "/home/pi/canlogger/canlogger.log"  		// debug log location
-#define CAN_DIR "/home/pi/canlogger/"  						// can log location
+#define LOG_FILE "/home/pi/canlogger2/canlogger.log"  		// debug log location
+#define CAN_DIR "/home/pi/canlogger2/"  						// can log location
 #define SUP_BIKE 27									 		// SUP_BIKE is used to check whether motorcycle is awake
 #define GPS_CAN_ID_NUM1 2047                    			// virtual CAN id for longitude and latitude of GPS data. 2047 = "7FF"
 #define GPS_CAN_ID_NUM2 2046                    			// virtual CAN id for altitude and speed of GPS data. 2046 = "7FE"
@@ -77,6 +77,7 @@ int finalyze();
 void sigterm(int signo);
 struct timeval diff_time(); 
 int is_keyon();
+int initializeIPC();
 void write_shm(struct CANData *CANData);
 
 // debug output function
@@ -161,8 +162,8 @@ int initialize(const char *sock)
 int initializeIPC(){
 	// create empty file
 	const char file_path[] = "./key.dat";
-	g_logfile = fopen(file_path, "w");
-    fclose(g_logfile);
+	g_keyfile = fopen(file_path, "w");
+    fclose(g_keyfile);
 
 	// getting IPC key
     const int id = 5;      // 5 means Johann Zarco
@@ -177,8 +178,7 @@ int initializeIPC(){
 
     // getting shared memory ID
     const int size = 25600;
-	g_seg_id = shmget(key, size, 
-                              IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
+	g_seg_id = shmget(key, size, IPC_CREAT | 0666);
     if(g_seg_id == -1){
 #ifdef DEBUG
 		sprintf(g_log_str,"Failed to acquire segment\n");
@@ -188,9 +188,9 @@ int initializeIPC(){
     }
 
     // attach shared memory to process
-    g_shared_memory = shmat(g_seg_id, 0, 0);
+    g_shared_memory = (char *)shmat(g_seg_id, (void *)0, 0);
 	
-	if (shmdt(g_shared_memory) == -1){
+	if (g_shared_memory == (char *)-1){
 #ifdef DEBUG
 		sprintf(g_log_str,"Failed to acquire shared memory\n");
 		debug_log(g_log_str);
@@ -588,9 +588,14 @@ int main(void)
     if (initialize(CAN_IF)!=0) {
 		return -1;
 	}
-	
+
+#ifdef DEBUG
+		sprintf(g_log_str,"0\n");
+		debug_log(g_log_str);
+#endif	
+
 	// initialize IPC
-	if (initializeIPC != 0){
+	if (initializeIPC() != 0){
 		return -1;
 	}
 	
