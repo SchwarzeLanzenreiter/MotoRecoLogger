@@ -29,6 +29,9 @@
 #include <wiringPi.h>
 #include <gps.h>
 #include <math.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 #include <sys/ioctl.h>
 #include <sys/time.h>
 #include <sys/uio.h>
@@ -58,11 +61,14 @@ char g_log_str[256];
 struct timespec g_start_timestamp = { 0, 0 };
 struct CANData g_candata;
 FILE *g_logfile = NULL;
+FILE *g_keyfile = NULL;
 int g_flg_key_on[3];
 int g_rc = -1;
 struct gps_data_t g_gps_data;
 char g_fname[sizeof(CAN_DIR) + CAN_FILE_NAME_LENGTH + 1]; // CAN_FILE_NAME_LENGTH is filename length like "20190501_120423.dat"
-	
+char* g_shared_memory;
+int g_seg_id;
+
 // proto
 void debug_log(char log_txt[256], ...);	
 int initialize(const char *sock);
@@ -71,6 +77,7 @@ int finalyze();
 void sigterm(int signo);
 struct timeval diff_time(); 
 int is_keyon();
+void write_shm(struct CANData *CANData);
 
 // debug output function
 void debug_log(char log_txt[256], ...)
@@ -148,6 +155,53 @@ int initialize(const char *sock)
 	pinMode(SUP_BIKE, INPUT);
 
     return 0;
+}
+
+// create and initialize shared memory
+int initializeIPC(){
+	// create empty file
+	const char file_path[] = "./key.dat";
+	g_logfile = fopen(file_path, "w");
+    fclose(g_logfile);
+
+	// getting IPC key
+    const int id = 5;      // 5 means Johann Zarco
+    const key_t key = ftok(file_path, id);
+    if(key == -1){
+#ifdef DEBUG
+		sprintf(g_log_str,"Failed to acquire key\n");
+		debug_log(g_log_str);
+#endif
+        return -1;  
+    }
+
+    // getting shared memory ID
+    const int size = 25600;
+	g_seg_id = shmget(key, size, 
+                              IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR);
+    if(g_seg_id == -1){
+#ifdef DEBUG
+		sprintf(g_log_str,"Failed to acquire segment\n");
+		debug_log(g_log_str);
+#endif
+        return -1;
+    }
+
+    // attach shared memory to process
+    g_shared_memory = shmat(g_seg_id, 0, 0);
+	
+	if (shmdt(g_shared_memory) == -1){
+#ifdef DEBUG
+		sprintf(g_log_str,"Failed to acquire shared memory\n");
+		debug_log(g_log_str);
+#endif
+		return -1;
+	}
+	
+	// 0 fill shared memory
+	memset(g_shared_memory, 0, size);
+	
+	return 0;
 }
 
 // calc diff time from program start
@@ -294,6 +348,43 @@ int is_keyon(){
 	return 0;
 }
 
+// write CANData to shared memory
+//  struct CANData {
+//		unsigned int		second;
+//		unsigned short int 	mirisecond;
+//		unsigned short int 	id;
+//		char 				data[8];
+//  };	
+void write_shm(struct CANData *CANData){
+	// reset counter
+	int i = 0;
+	
+	// check 1st canid
+	unsigned short int 	id_shm = 0;
+	memcpy(&id_shm, &g_shared_memory[i + sizeof(unsigned int) + sizeof(unsigned short int)], sizeof(unsigned short int));
+	
+	
+	// write 1st CANData to shared memory
+	if (id_shm==0){
+		memcpy(&g_shared_memory[i], CANData, sizeof(CANData));
+		return;
+	}
+	
+	// search same CAN id of CANData in shared memory
+	while (id_shm != 0){
+		if (id_shm == CANData->id){
+			memcpy(&g_shared_memory[i], CANData, sizeof(CANData));
+			return;
+		}
+		
+		i += sizeof(CANData);
+		memcpy(&id_shm, &g_shared_memory[i + sizeof(unsigned int) + sizeof(unsigned short int)], sizeof(unsigned short int));
+	}
+	
+	memcpy(&g_shared_memory[i], CANData, sizeof(CANData));
+	return;
+}
+
 // read can data
 void keep_reading()
 {
@@ -348,6 +439,9 @@ void keep_reading()
 			if (g_logfile){
 				fwrite(&g_candata, sizeof(g_candata), 1, g_logfile);
 			}
+			
+			// write to shared memory
+			write_shm(&g_candata);
 		}
 		
 		// read gps data
@@ -356,7 +450,8 @@ void keep_reading()
 				if ((g_rc = gps_read(&g_gps_data)) != -1) {
 					// only continue if longitude and latitude are fixed
 					if (
-						(g_gps_data.status == STATUS_FIX || g_gps_data.status == STATUS_DGPS_FIX ) &&  //from raspbian buster, need to add STATUS_DGPS_FIX, or never log GPS data. 
+						//(g_gps_data.status == STATUS_FIX || g_gps_data.status == STATUS_DGPS_FIX ) &&  //from raspbian buster, need to add STATUS_DGPS_FIX, or never log GPS data. 
+						g_gps_data.status == STATUS_FIX &&  // Strech doesnt need STATUS_DGPS_FIX
 						(g_gps_data.fix.mode == MODE_2D || g_gps_data.fix.mode == MODE_3D) &&
 						!isnan(g_gps_data.fix.latitude) &&
 						!isnan(g_gps_data.fix.longitude)) {
@@ -412,6 +507,9 @@ void keep_reading()
 						if (g_logfile){
 							fwrite(&g_candata, sizeof(g_candata), 1, g_logfile);
 						}
+						
+						// write to shared memory
+						write_shm(&g_candata);
 					} else {
 #ifdef DEBUG
 						sprintf(g_log_str,"gps not fixed gps_status:%d fix:%d\n",g_gps_data.status,g_gps_data.fix.mode);
@@ -465,6 +563,11 @@ int finalize()
 		gps_close (&g_gps_data);
 		g_rc = -1;
 	}
+	
+	// dispose shared memory
+	shmdt(g_shared_memory);
+	shmctl(g_seg_id, IPC_RMID, NULL);
+	
     return 0;
 }
 
@@ -483,6 +586,11 @@ int main(void)
 	
 	// initialize can interface
     if (initialize(CAN_IF)!=0) {
+		return -1;
+	}
+	
+	// initialize IPC
+	if (initializeIPC != 0){
 		return -1;
 	}
 	
