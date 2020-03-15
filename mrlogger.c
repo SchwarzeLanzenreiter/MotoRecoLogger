@@ -39,21 +39,16 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
+#include "./motoreco.h"
+
 #define DEBUG
 #define CAN_IF "can0"
-#define LOG_FILE "/home/pi/canlogger2/canlogger.log"  		// debug log location
-#define CAN_DIR "/home/pi/canlogger2/"  						// can log location
+#define LOG_FILE "/home/pi/motoreco/canlogger.log"  		// debug log location
+#define CAN_DIR "/home/pi/motoreco/"  						// can log location
 #define SUP_BIKE 27									 		// SUP_BIKE is used to check whether motorcycle is awake
 #define GPS_CAN_ID_NUM1 2047                    			// virtual CAN id for longitude and latitude of GPS data. 2047 = "7FF"
 #define GPS_CAN_ID_NUM2 2046                    			// virtual CAN id for altitude and speed of GPS data. 2046 = "7FE"
 #define CAN_FILE_NAME_LENGTH 19
-
-struct CANData {
-	unsigned int		second;
-	unsigned short int 	mirisecond;
-	unsigned short int 	id;
-	char 				data[8];
-};	
 
 int g_sock;
 int g_running;
@@ -78,7 +73,7 @@ void sigterm(int signo);
 struct timeval diff_time(); 
 int is_keyon();
 int initializeIPC();
-void write_shm(struct CANData *CANData);
+void write_shm(struct CANData CANData);
 
 // debug output function
 void debug_log(char log_txt[256], ...)
@@ -160,25 +155,12 @@ int initialize(const char *sock)
 
 // create and initialize shared memory
 int initializeIPC(){
-	// create empty file
-	const char file_path[] = "./key.dat";
-	g_keyfile = fopen(file_path, "w");
-    fclose(g_keyfile);
-
-	// getting IPC key
-    const int id = 5;      // 5 means Johann Zarco
-    const key_t key = ftok(file_path, id);
-    if(key == -1){
-#ifdef DEBUG
-		sprintf(g_log_str,"Failed to acquire key\n");
-		debug_log(g_log_str);
-#endif
-        return -1;  
-    }
+	//key  Johann Zarco, Bradley Smith, Pol Espargaro and Jonas Folger
+	// combination of 5 38 44 94 and smallest number is ... 3444589 
+	int key = 3444589;
 
     // getting shared memory ID
-    const int size = 25600;
-	g_seg_id = shmget(key, size, IPC_CREAT | 0666);
+	g_seg_id = shmget(key, SHM_SIZE, IPC_CREAT | 0666);
     if(g_seg_id == -1){
 #ifdef DEBUG
 		sprintf(g_log_str,"Failed to acquire segment\n");
@@ -199,7 +181,7 @@ int initializeIPC(){
 	}
 	
 	// 0 fill shared memory
-	memset(g_shared_memory, 0, size);
+	memset(g_shared_memory, 0, SHM_SIZE);
 	
 	return 0;
 }
@@ -355,33 +337,34 @@ int is_keyon(){
 //		unsigned short int 	id;
 //		char 				data[8];
 //  };	
-void write_shm(struct CANData *CANData){
+void write_shm(struct CANData CANData){
+	struct CANData tempData;
+
 	// reset counter
 	int i = 0;
 	
 	// check 1st canid
 	unsigned short int 	id_shm = 0;
-	memcpy(&id_shm, &g_shared_memory[i + sizeof(unsigned int) + sizeof(unsigned short int)], sizeof(unsigned short int));
+	memcpy(&tempData, &g_shared_memory[i], sizeof(CANData));
 	
 	
 	// write 1st CANData to shared memory
-	if (id_shm==0){
-		memcpy(&g_shared_memory[i], CANData, sizeof(CANData));
+	if (tempData.id==0){
+		memcpy(&g_shared_memory[i], &CANData, sizeof(CANData));
 		return;
 	}
 	
-	// search same CAN id of CANData in shared memory
-	while (id_shm != 0){
-		if (id_shm == CANData->id){
-			memcpy(&g_shared_memory[i], CANData, sizeof(CANData));
+	while (tempData.id != 0 && i < SHM_SIZE - sizeof(CANData)){
+		if (tempData.id == CANData.id){
+			memcpy(&g_shared_memory[i], &CANData, sizeof(CANData));
 			return;
 		}
 		
 		i += sizeof(CANData);
-		memcpy(&id_shm, &g_shared_memory[i + sizeof(unsigned int) + sizeof(unsigned short int)], sizeof(unsigned short int));
+		memcpy(&tempData, &g_shared_memory[i], sizeof(CANData));
 	}
 	
-	memcpy(&g_shared_memory[i], CANData, sizeof(CANData));
+	memcpy(&g_shared_memory[i], &CANData, sizeof(CANData));
 	return;
 }
 
@@ -441,7 +424,7 @@ void keep_reading()
 			}
 			
 			// write to shared memory
-			write_shm(&g_candata);
+			write_shm(g_candata);
 		}
 		
 		// read gps data
@@ -496,7 +479,10 @@ void keep_reading()
 						if (g_logfile){
 							fwrite(&g_candata, sizeof(g_candata), 1, g_logfile);
 						}
-						
+
+						// write to shared memory
+						write_shm(g_candata);
+
 						// create can format data2(altitude and speed)
 						g_candata.id = GPS_CAN_ID_NUM2;
 						memset(g_candata.data,0,sizeof(g_candata.data));
@@ -509,7 +495,7 @@ void keep_reading()
 						}
 						
 						// write to shared memory
-						write_shm(&g_candata);
+						write_shm(g_candata);
 					} else {
 #ifdef DEBUG
 						sprintf(g_log_str,"gps not fixed gps_status:%d fix:%d\n",g_gps_data.status,g_gps_data.fix.mode);
