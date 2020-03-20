@@ -433,8 +433,8 @@ void keep_reading()
 				if ((g_rc = gps_read(&g_gps_data)) != -1) {
 					// only continue if longitude and latitude are fixed
 					if (
-						//(g_gps_data.status == STATUS_FIX || g_gps_data.status == STATUS_DGPS_FIX ) &&  //from raspbian buster, need to add STATUS_DGPS_FIX, or never log GPS data. 
-						g_gps_data.status == STATUS_FIX &&  // Strech doesnt need STATUS_DGPS_FIX
+						(g_gps_data.status == STATUS_FIX || g_gps_data.status == STATUS_DGPS_FIX ) &&  //from raspbian buster, need to add STATUS_DGPS_FIX, or never log GPS data. 
+						//g_gps_data.status == STATUS_FIX &&  // Strech doesnt need STATUS_DGPS_FIX
 						(g_gps_data.fix.mode == MODE_2D || g_gps_data.fix.mode == MODE_3D) &&
 						!isnan(g_gps_data.fix.latitude) &&
 						!isnan(g_gps_data.fix.longitude)) {
