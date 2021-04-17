@@ -344,7 +344,7 @@ void write_shm(struct CANData CANData){
 	int i = 0;
 	
 	// check 1st canid
-	unsigned short int 	id_shm = 0;
+	
 	memcpy(&tempData, &g_shared_memory[i], sizeof(CANData));
 	
 	
