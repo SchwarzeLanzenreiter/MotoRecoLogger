@@ -1,6 +1,6 @@
 // MIT License
 // 
-// Copyright (c) 2019 Schwarze Lanzenreiter
+// Copyright (c) 2019-2021 Schwarze Lanzenreiter
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -344,7 +344,6 @@ void write_shm(struct CANData CANData){
 	int i = 0;
 	
 	// check 1st canid
-	
 	memcpy(&tempData, &g_shared_memory[i], sizeof(CANData));
 	
 	
@@ -375,12 +374,15 @@ void keep_reading()
     int recv = 0;
 	struct timeval tv = {1, 0};
 	struct timespec elapsed_timestamp;
-	fd_set readfd;
+	fd_set fds,readfd;
 	char timestring[16];
 	int int_lon, int_lat,int_alt,int_spd;
 	int int_lon_prev = 0;
 	int int_lat_prev = 0;
 	char buf[64];
+
+    FD_ZERO(&readfd);
+    FD_SET(g_sock, &readfd);
 		
     while(g_running)
     {
@@ -390,13 +392,12 @@ void keep_reading()
 			break;
 		}
 
-        FD_ZERO(&readfd);
-        FD_SET(g_sock, &readfd);
-
 		tv.tv_sec = 1;
 		tv.tv_usec = 0;
 
-        if (select((g_sock+1), &readfd, NULL, NULL, &tv) < 0){
+		memcpy(&fds, &readfd, sizeof(fd_set));
+
+        if (select((g_sock+1), &fds, NULL, NULL, &tv) < 0){
 			g_running = 0;
 			break;
 #ifdef DEBUG
@@ -405,7 +406,7 @@ void keep_reading()
 #endif
 		}
 
-		if (FD_ISSET(g_sock, &readfd))
+		if (FD_ISSET(g_sock, &fds))
 		{
 			recv = read(g_sock, &frame_data, sizeof(struct can_frame));
 
@@ -417,14 +418,15 @@ void keep_reading()
 				g_candata.mirisecond = elapsed_timestamp.tv_nsec/1000000;             //convert n sec to m sec, n sec is too high resolution
 				g_candata.id = frame_data.can_id;
 				memcpy(g_candata.data, frame_data.data, 8);
-			}			
-			// write to log file
-			if (g_logfile){
-				fwrite(&g_candata, sizeof(g_candata), 1, g_logfile);
+					
+				// write to log file
+				if (g_logfile){
+					fwrite(&g_candata, sizeof(g_candata), 1, g_logfile);
+				}
+				
+				// write to shared memory
+				write_shm(g_candata);
 			}
-			
-			// write to shared memory
-			write_shm(g_candata);
 		}
 		
 		// read gps data
@@ -441,13 +443,6 @@ void keep_reading()
 			
 						elapsed_timestamp = elapsed_time();
 						
-#ifdef DEBUG
-//						printf("%f\n",g_gps_data.fix.longitude);
-//						printf("%f\n",g_gps_data.fix.latitude);
-//						printf("%f\n",g_gps_data.fix.altitude);
-//						printf("%f\n",g_gps_data.fix.speed);
-#endif
-
 						g_candata.second = elapsed_timestamp.tv_sec;	
 						g_candata.mirisecond = elapsed_timestamp.tv_nsec/1000000;             //convert n sec to m sec, n sec is too high resolution
 						
