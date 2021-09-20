@@ -345,8 +345,7 @@ void write_shm(struct CANData CANData){
 	
 	// check 1st canid
 	memcpy(&tempData, &g_shared_memory[i], sizeof(CANData));
-	
-	
+		
 	// write 1st CANData to shared memory
 	if (tempData.id==0){
 		memcpy(&g_shared_memory[i], &CANData, sizeof(CANData));
@@ -391,9 +390,6 @@ void keep_reading()
 			g_running = 0;
 			break;
 		}
-
-		tv.tv_sec = 1;
-		tv.tv_usec = 0;
 
 		memcpy(&fds, &readfd, sizeof(fd_set));
 
