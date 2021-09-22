@@ -393,6 +393,10 @@ void keep_reading()
 
 		memcpy(&fds, &readfd, sizeof(fd_set));
 
+		// always need to initialize tv struct before calling select function below. 
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+
         if (select((g_sock+1), &fds, NULL, NULL, &tv) < 0){
 			g_running = 0;
 			break;
